@@ -1,0 +1,4 @@
+file 'C:\lipdub_project_final\seg_0_dubbed.mp4'
+file 'C:\lipdub_project_final\seg_1_dubbed.mp4'
+file 'C:\lipdub_project_final\seg_2_dubbed.mp4'
+file 'C:\lipdub_project_final\seg_3_dubbed.mp4'
