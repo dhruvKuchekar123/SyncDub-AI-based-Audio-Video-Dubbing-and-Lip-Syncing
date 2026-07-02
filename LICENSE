@@ -1,0 +1,16 @@
+Copyright (c) 2026 Dhruv Kuchekar. All rights reserved.
+
+This repository and its contents are proprietary. No permission is granted
+to use, copy, modify, distribute, or create derivative works of this
+software, in whole or in part, without prior written consent of the
+copyright holder.
+
+Third-party components vendored in this repository remain governed by
+their own licenses, which take precedence for those components:
+
+  - backend/Wav2Lip_repo/ — Wav2Lip (Rudrabha et al.): personal, research,
+    and non-commercial use only. See backend/Wav2Lip_repo/README.md.
+
+Note: the open-source strategy for this project is deliberately deferred;
+see docs/founder-os/26-open-source-community-investors.md. This proprietary
+license is the explicit interim default, not an oversight.
