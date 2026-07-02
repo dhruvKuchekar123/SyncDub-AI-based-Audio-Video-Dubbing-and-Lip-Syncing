@@ -7,6 +7,8 @@ import json
 
 from fastapi.middleware.cors import CORSMiddleware
 
+import config
+
 app = FastAPI()
 
 app.add_middleware(
@@ -17,14 +19,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-OUTPUT_FOLDER = os.path.join(BASE_DIR, "outputs")
-PROGRESS_PATH = os.path.join(BASE_DIR, "progress.json")
-LOG_PATH = os.path.join(BASE_DIR, "pipeline.log")
+BASE_DIR = str(config.BASE_DIR)
+UPLOAD_FOLDER = str(config.UPLOAD_DIR)
+OUTPUT_FOLDER = str(config.OUTPUT_DIR)
+PROGRESS_PATH = str(config.PROGRESS_PATH)
+LOG_PATH = str(config.LOG_PATH)
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+config.ensure_dirs()
 
 # serve output videos
 app.mount("/outputs", StaticFiles(directory=OUTPUT_FOLDER), name="outputs")
@@ -34,7 +35,9 @@ app.mount("/outputs", StaticFiles(directory=OUTPUT_FOLDER), name="outputs")
 @app.post("/upload-video/")
 async def upload_video(file: UploadFile = File(...)):
 
-    input_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    # basename() strips any client-supplied directory components (path traversal)
+    safe_name = os.path.basename(file.filename or "upload.mp4")
+    input_path = os.path.join(UPLOAD_FOLDER, safe_name)
 
     # save uploaded video
     with open(input_path, "wb") as buffer:

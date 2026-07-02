@@ -1,0 +1,11 @@
+.git
+frontend
+docs
+backend/uploads
+backend/outputs
+backend/temp
+backend/pipeline.log
+backend/progress.json
+backend/Wav2Lip_repo/checkpoints/*.pth
+**/__pycache__
+*.pdf

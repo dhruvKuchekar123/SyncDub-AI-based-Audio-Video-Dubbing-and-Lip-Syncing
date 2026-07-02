@@ -1,18 +1,20 @@
+# Main pipeline environment (the XTTS voice-cloning env is separate; see .env.example)
+# NOTE: unpinned by known debt (docs/debt.md #6); bounds below are correctness, not pins.
+fastapi
+uvicorn
+python-multipart
 openai-whisper
-moviepy
+deep-translator
+edge-tts
+moviepy<2.0  # code uses the 1.x `moviepy.editor` API, removed in 2.0
 torch
 transformers
 sentencepiece
-google-cloud-texttospeech
 librosa
 soundfile
-ffmpeg-python
 opencv-python
 face-alignment
 numba
 tqdm
 requests
 scipy
-pathlib
-git+https://github.com/openai/whisper.git
-
