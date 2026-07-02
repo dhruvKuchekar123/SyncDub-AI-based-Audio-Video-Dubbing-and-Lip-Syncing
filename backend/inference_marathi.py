@@ -11,21 +11,18 @@ import sys
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-os.environ["IMAGEIO_FFMPEG_EXE"] = r"D:/Miniconda3/envs/lipdub_env/Library/bin/ffmpeg.exe"
-os.environ["COQUI_TOS_AGREED"] = "1"
-
 # ---------------- CONFIGURATION ----------------
-USE_VOICE_CLONING = True  # SET TO False TO REVERT TO DEFAULT VOICES (Manohar/Aarohi)
+# All machine-specific values (ffmpeg location, cloning env, feature flags)
+# live in config.py and are driven by environment variables.
+import config
+from config import USE_VOICE_CLONING
 
-# ---------------- PATH SETUP ----------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMP_DIR = os.path.join(BASE_DIR, "temp")
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+BASE_DIR = str(config.BASE_DIR)
+TEMP_DIR = str(config.TEMP_DIR)
+OUTPUT_DIR = str(config.OUTPUT_DIR)
+UPLOAD_DIR = str(config.UPLOAD_DIR)
 
-os.makedirs(TEMP_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+config.ensure_dirs()
 
 def update_progress(progress, status):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -126,7 +123,7 @@ def extract_reference_sample(audio_path):
     print(f"[INFO] Extracting clean voice reference sample...", flush=True)
     
     # We take 10 seconds starting from 5s to avoid potential intro music
-    ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
+    ffmpeg_exe = config.FFMPEG
     cmd = [
         ffmpeg_exe, "-y",
         "-i", audio_path,
@@ -302,13 +299,16 @@ def synthesize_cloned_speech(text, speaker_wav, out_path):
         raise RuntimeError("Empty text for cloned synthesis")
 
     print(f"[INFO] Bridging to voiceclone_env for XTTS v2 Cloning...", flush=True)
-    
-    # Path to the cross-env bridge and environment
-    CLONE_PYTHON = r"D:\Miniconda3\envs\voiceclone_env\python.exe"
+
+    if not config.CLONE_PYTHON:
+        raise RuntimeError(
+            "Voice cloning requested but SYNCDUB_CLONE_PYTHON is not set "
+            "(path to the XTTS environment's python; see .env.example)"
+        )
     BRIDGE_SCRIPT = os.path.join(BASE_DIR, "clone_bridge.py")
 
     cmd = [
-        CLONE_PYTHON, BRIDGE_SCRIPT,
+        config.CLONE_PYTHON, BRIDGE_SCRIPT,
         "--text", text,
         "--speaker_wav", speaker_wav,
         "--out_path", out_path,
@@ -339,7 +339,7 @@ def normalize_audio(audio_path):
 
     out_path = os.path.join(TEMP_DIR, "marathi_16k.wav")
 
-    ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
+    ffmpeg_exe = config.FFMPEG
     cmd = [
         ffmpeg_exe,
         "-y",
@@ -379,8 +379,8 @@ def sync_audio_duration(audio_path, target_duration):
     
     synced_path = os.path.join(TEMP_DIR, "marathi_synced.wav")
     print(f"[INFO] Syncing audio duration: {current_duration:.2f}s -> {target_duration:.2f}s (Speed: {tempo:.2f}x)", flush=True)
-    
-    ffmpeg_exe = os.environ.get("IMAGEIO_FFMPEG_EXE", "ffmpeg")
+
+    ffmpeg_exe = config.FFMPEG
     cmd = [
         ffmpeg_exe, "-y",
         "-i", audio_path,
@@ -389,6 +389,36 @@ def sync_audio_duration(audio_path, target_duration):
     ]
     subprocess.run(cmd, capture_output=True)
     return synced_path
+
+
+# ---------------- SEGMENT GROUPING ----------------
+def group_segments(segments, gap_threshold=1.5):
+    """Group ASR segments into context blocks for translation.
+
+    Translating whole blocks instead of line fragments preserves Marathi
+    grammar. A pause longer than gap_threshold seconds starts a new block.
+    """
+    grouped_text = []
+    current_block = []
+
+    last_end = 0
+    for seg in segments:
+        hi_text = seg["text"].strip()
+        if not hi_text:
+            continue
+
+        if current_block and (seg["start"] - last_end) > gap_threshold:
+            grouped_text.append(" ".join(current_block))
+            current_block = [hi_text]
+        else:
+            current_block.append(hi_text)
+
+        last_end = seg["end"]
+
+    if current_block:
+        grouped_text.append(" ".join(current_block))
+
+    return grouped_text
 
 
 # ---------------- MAIN PIPELINE ----------------
@@ -415,30 +445,8 @@ def process_video(video_path):
     segments = transcribe_audio(asr_audio)
 
     print("[INFO] Translating segments with grammatical context...")
-    
-    # -----------------------------------------------------------------
-    # Group segments into paragraphs (blocks) for better context
-    # instead of translating small fragments.
-    # -----------------------------------------------------------------
-    grouped_text = []
-    current_block = []
-    
-    last_end = 0
-    for seg in segments:
-        hi_text = seg["text"].strip()
-        if not hi_text: continue
-        
-        # If gap between segments > 1.5 seconds, start new block
-        if current_block and (seg["start"] - last_end) > 1.5:
-            grouped_text.append(" ".join(current_block))
-            current_block = [hi_text]
-        else:
-            current_block.append(hi_text)
-            
-        last_end = seg["end"]
-        
-    if current_block:
-        grouped_text.append(" ".join(current_block))
+
+    grouped_text = group_segments(segments)
 
     print(f"[INFO] Translation blocks created: {len(grouped_text)}", flush=True)
     update_progress(50, "Translating to Marathi (Contextual)")

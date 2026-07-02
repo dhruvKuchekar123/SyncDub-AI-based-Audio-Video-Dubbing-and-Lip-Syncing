@@ -1,0 +1,3 @@
+pytest
+ruff
+numpy  # unit tests import the pipeline module, whose only heavy top-level import is numpy
