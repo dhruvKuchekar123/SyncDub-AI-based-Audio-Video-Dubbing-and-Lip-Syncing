@@ -66,6 +66,25 @@ def test_tag_emotions_from_punctuation():
     assert [b.emotion for b in tagged] == ["questioning", "emphatic", "neutral"]
 
 
+# ---------------- emotion -> prosody mapping ----------------
+
+def test_prosody_params_neutral_matches_legacy_gender_nudges():
+    from stages.edge_tts_synth import prosody_params
+    assert prosody_params("male", "neutral", map_emotion=True) == ("-2%", "+0Hz")
+    assert prosody_params("female", "neutral", map_emotion=True) == ("+2%", "+0Hz")
+
+
+def test_prosody_params_applies_documented_emotion_nudges():
+    from stages.edge_tts_synth import prosody_params
+    assert prosody_params("male", "questioning", map_emotion=True) == ("-2%", "+2Hz")
+    assert prosody_params("male", "emphatic", map_emotion=True) == ("-5%", "+0Hz")
+
+
+def test_prosody_params_ignores_emotion_when_mapping_off():
+    from stages.edge_tts_synth import prosody_params
+    assert prosody_params("male", "questioning", map_emotion=False) == ("-2%", "+0Hz")
+
+
 # ---------------- translate_segments (same-language passthrough) ----------------
 
 def test_translate_segments_same_language_passthrough():

@@ -346,7 +346,10 @@ def synthesize_segments(segments, tgt, temp_dir, *, enable_cloning, reference_wa
             print(f"[WARN] Voice cloning failed: {e}. Falling back to Edge-TTS.", flush=True)
 
     update_progress(70, "Synthesizing dubbed audio (Natural)")
-    options = SynthesisOptions(gender=gender)
+    # map_emotion: Edge-TTS accepts style controls, so recorded delivery tags
+    # become small prosody nudges (Ch. 18 rung 2). XTTS has none — the tag is
+    # recorded in metrics only.
+    options = SynthesisOptions(gender=gender, map_emotion=True)
     segments = EdgeTTSSynthesizer().synthesize(segments, tgt, synth_dir, options)
     return segments, "edge_tts", fallback_reason
 
