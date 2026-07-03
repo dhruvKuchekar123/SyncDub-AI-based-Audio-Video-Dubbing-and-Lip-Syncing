@@ -28,7 +28,7 @@ config.ensure_dirs()
 app.mount("/outputs", StaticFiles(directory=str(config.OUTPUT_DIR)), name="outputs")
 
 
-PIPELINE_SCRIPT = os.path.join(os.path.dirname(__file__), "inference_marathi.py")
+PIPELINE_SCRIPT = os.path.join(os.path.dirname(__file__), "pipeline.py")
 
 
 @app.get("/languages")

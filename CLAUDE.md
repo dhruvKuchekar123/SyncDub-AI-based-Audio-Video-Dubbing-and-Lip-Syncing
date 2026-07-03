@@ -18,8 +18,8 @@ SyncDub is an AI video-localization company (Hindi→Marathi dubbing with lip sy
 
 ## Codebase facts worth knowing
 
-- Pipeline: `backend/inference_marathi.py` (Whisper ASR → deep-translator MT → Edge-TTS/XTTS via `backend/clone_bridge.py` subprocess bridge → Wav2Lip → MoviePy render). Server: `backend/server.py` (FastAPI, currently demo-grade: single global `progress.json`, no auth, `Popen` fire-and-forget).
-- Stage interfaces (`Transcriber`/`Translator`/`Synthesizer`/`LipSyncer`) are the target architecture — keep model specifics behind adapters; interfaces encode tasks, not model shapes.
+- Pipeline: `backend/pipeline.py` (Whisper ASR → deep-translator MT → per-segment TTS behind the `Synthesizer` interface (`backend/stages/`; Edge-TTS + XTTS via `backend/clone_bridge.py` subprocess bridge) → isochronous track assembly → Wav2Lip). Server: `backend/server.py` (FastAPI; per-job ids/progress/outputs via `backend/jobs.py`, one job at a time via a pid-checked lock; still no auth, CORS `*` — debt #4).
+- Stage interfaces (`Transcriber`/`Translator`/`Synthesizer`/`LipSyncer`) are the target architecture — `Synthesizer` is real (`backend/stages/synthesizer.py`), the rest arrive with their first model swap. Keep model specifics behind adapters; interfaces encode tasks, not model shapes.
 - The job/segment/correction **schema outranks all code**: changes are additive and get the most senior review (`07-architecture-principles.md` §7.5).
 - Known debt and its triggers: `14-tech-debt.md` §14.2. Touching a debted area means repaying or explicitly extending the entry.
 
