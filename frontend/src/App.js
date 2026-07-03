@@ -508,6 +508,8 @@ const styles = `
   }
 `;
 
+const API_BASE = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
+
 function formatSize(bytes) {
   if (!bytes) return "0 Bytes";
   const k = 1024;
@@ -551,31 +553,35 @@ export default function App() {
     setLoading(true);
     setIsDone(false);
     setProgress(0);
+    setError("");
     setStatus("Initializing AI Pipeline...");
 
     try {
       const form = new FormData();
       form.append("file", file);
-      // Change to your actual backend URL
-      await axios.post("http://127.0.0.1:8000/upload-video/", form);
-      pollProgress();
+      const res = await axios.post(`${API_BASE}/jobs`, form);
+      pollProgress(res.data.job_id);
     } catch (err) {
-      setError("AI Gateway Timeout. Ensure the backend is running.");
+      const detail = err.response?.data?.detail;
+      setError(detail || "AI Gateway Timeout. Ensure the backend is running.");
       setLoading(false);
     }
   };
 
-  const pollProgress = () => {
+  const pollProgress = (jobId) => {
     const timer = setInterval(async () => {
       try {
-        const res = await axios.get("http://127.0.0.1:8000/progress");
-        const currentProgress = res.data.progress;
-        setProgress(currentProgress);
+        const res = await axios.get(`${API_BASE}/progress/${jobId}`);
+        setProgress(res.data.progress);
         setStatus(res.data.status);
 
-        if (currentProgress === 100) {
+        if (res.data.state === "error") {
           clearInterval(timer);
-          fetchFinalVideo();
+          setError(res.data.error || "Pipeline failed. Check backend/jobs logs.");
+          setLoading(false);
+        } else if (res.data.state === "done") {
+          clearInterval(timer);
+          fetchFinalVideo(jobId);
         }
       } catch (e) {
         clearInterval(timer);
@@ -585,15 +591,16 @@ export default function App() {
     }, 1500);
   };
 
-  const fetchFinalVideo = async () => {
+  const fetchFinalVideo = async (jobId) => {
     try {
-      const res = await axios.get("http://127.0.0.1:8000/video");
-      setOutputUrl("http://127.0.0.1:8000" + res.data.video_url);
+      const res = await axios.get(`${API_BASE}/video/${jobId}`);
+      setOutputUrl(API_BASE + res.data.video_url);
       setLoading(false);
       setIsDone(true);
       setStatus("Mission Complete");
     } catch (e) {
       setError("Final render retrieval failed.");
+      setLoading(false);
     }
   };
 

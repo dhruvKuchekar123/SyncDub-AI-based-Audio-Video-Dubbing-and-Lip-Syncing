@@ -1,16 +1,18 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
 import shutil
 import subprocess
 import os
-import json
+import sys
 
 from fastapi.middleware.cors import CORSMiddleware
 
 import config
+import jobs
 
 app = FastAPI()
 
+# CORS * is known debt #4 — demo-only until any internet-reachable deployment.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,69 +21,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = str(config.BASE_DIR)
-UPLOAD_FOLDER = str(config.UPLOAD_DIR)
-OUTPUT_FOLDER = str(config.OUTPUT_DIR)
-PROGRESS_PATH = str(config.PROGRESS_PATH)
-LOG_PATH = str(config.LOG_PATH)
-
 config.ensure_dirs()
 
 # serve output videos
-app.mount("/outputs", StaticFiles(directory=OUTPUT_FOLDER), name="outputs")
+app.mount("/outputs", StaticFiles(directory=str(config.OUTPUT_DIR)), name="outputs")
 
 
-# ------------------- UPLOAD VIDEO -------------------
-@app.post("/upload-video/")
-async def upload_video(file: UploadFile = File(...)):
+PIPELINE_SCRIPT = os.path.join(os.path.dirname(__file__), "inference_marathi.py")
 
-    # basename() strips any client-supplied directory components (path traversal)
+
+@app.post("/jobs")
+async def create_job(file: UploadFile = File(...)):
+    busy = jobs.lock_holder()
+    if busy is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A job is already running ({busy}). Try again when it finishes.",
+        )
+
+    job_id = jobs.new_job_id()
+    paths = jobs.job_paths(job_id)
+    jobs.ensure_job_dirs(paths)
+
+    # basename() strips any client-supplied directory components (path
+    # traversal); the job-id prefix removes cross-job filename collisions.
     safe_name = os.path.basename(file.filename or "upload.mp4")
-    input_path = os.path.join(UPLOAD_FOLDER, safe_name)
+    input_path = os.path.join(str(config.UPLOAD_DIR), f"{job_id}_{safe_name}")
 
-    # save uploaded video
     with open(input_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-        
-    with open(PROGRESS_PATH, "w") as f:
-        json.dump({"progress": 0, "status": "Initializing..."}, f)
 
-    # run your AI pipeline
-    import sys
-    script_path = os.path.join(os.path.dirname(__file__), "inference_marathi.py")
+    progress = jobs.ProgressWriter(paths.progress_path, job_id)
+    progress.update(0, "Initializing...")
+
     command = [
         sys.executable,
-        script_path,
-        "--video",
-        os.path.abspath(input_path)
+        PIPELINE_SCRIPT,
+        "--video", os.path.abspath(input_path),
+        "--job-id", job_id,
     ]
-
-    with open(LOG_PATH, "a") as log_file:
+    with open(paths.log_path, "a") as log_file:
         subprocess.Popen(command, stdout=log_file, stderr=log_file)
 
-    return {"message": "Video processing started"}
+    return {"job_id": job_id, "message": "Video processing started"}
 
 
-@app.get("/progress")
-def get_progress():
-    if not os.path.exists(PROGRESS_PATH):
-        return {"progress": 0, "status": "No task started"}
-    try:
-        with open(PROGRESS_PATH) as f:
-            data = json.load(f)
-        return data
-    except (json.JSONDecodeError, ValueError):
-        # Handle cases where the file is currently being written to and is empty
-        return {"progress": 0, "status": "Updating..."}
+@app.get("/progress/{job_id}")
+def get_progress(job_id: str):
+    data = jobs.read_progress(jobs.job_paths(job_id).progress_path)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return data
 
 
-# ------------------- GET FINAL VIDEO -------------------
-@app.get("/video")
-def get_video():
+@app.get("/video/{job_id}")
+def get_video(job_id: str):
+    paths = jobs.job_paths(job_id)
+    data = jobs.read_progress(paths.progress_path)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    if data.get("state") != "done" or not os.path.exists(paths.output_path):
+        raise HTTPException(status_code=404, detail="Job not finished")
+    return {"video_url": f"/outputs/{job_id}.mp4"}
 
-    return {
-        "video_url": "/outputs/final_dubbed.mp4"
-    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -15,6 +15,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 # All machine-specific values (ffmpeg location, cloning env, feature flags)
 # live in config.py and are driven by environment variables.
 import config
+import jobs
 from config import USE_VOICE_CLONING
 
 BASE_DIR = str(config.BASE_DIR)
@@ -24,17 +25,16 @@ UPLOAD_DIR = str(config.UPLOAD_DIR)
 
 config.ensure_dirs()
 
+# Set in __main__; stays None when the module is imported (tests, tooling),
+# in which case progress updates only print.
+PROGRESS: "jobs.ProgressWriter | None" = None
+
+
 def update_progress(progress, status):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [PROGRESS] {progress}% - {status}", flush=True)
-    temp_path = os.path.join(BASE_DIR, "progress.json.tmp")
-    try:
-        # Write to temporary file then swap (atomic)
-        with open(temp_path, "w") as f:
-            json.dump({"progress": progress, "status": status}, f)
-        os.replace(temp_path, os.path.join(BASE_DIR, "progress.json"))
-    except Exception as e:
-        print(f"[{timestamp}] [WARN] Failed to write progress: {e}", flush=True)
+    if PROGRESS is not None:
+        PROGRESS.update(progress, status)
+    else:
+        print(f"[PROGRESS] {progress}% - {status}", flush=True)
 
 # ---------------- LOAD MODELS ----------------
 whisper_model = None
@@ -422,7 +422,7 @@ def group_segments(segments, gap_threshold=1.5):
 
 
 # ---------------- MAIN PIPELINE ----------------
-def process_video(video_path):
+def process_video(video_path, job_id):
 
     if not os.path.isabs(video_path):
         video_path = os.path.join(UPLOAD_DIR, video_path)
@@ -497,11 +497,8 @@ def process_video(video_path):
     # FREE MEMORY BEFORE WAV2LIP
     unload_models()
 
-    # Output video
-    output_video = os.path.join(
-        OUTPUT_DIR,
-        f"dubbed_{int(time.time())}.mp4"
-    )
+    # Output video (per-job name; nothing is overwritten across jobs)
+    output_video = str(jobs.job_paths(job_id).output_path)
 
     print("[INFO] Running Wav2Lip...", flush=True)
     update_progress(85, "Merging audio and video")
@@ -515,12 +512,8 @@ def process_video(video_path):
     if not os.path.exists(output_video):
         raise RuntimeError("Wav2Lip finished but output video not found")
 
-    # Rename to final_dubbed.mp4 so the frontend can find it
-    final_dest = os.path.join(OUTPUT_DIR, "final_dubbed.mp4")
-    os.replace(output_video, final_dest)
-    output_video = final_dest
-
-    update_progress(100, "Processing Complete")
+    if PROGRESS is not None:
+        PROGRESS.done(video_url=f"/outputs/{job_id}.mp4")
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n[{timestamp}] SUCCESS -> {output_video}")
 
@@ -535,7 +528,27 @@ if __name__ == "__main__":
         required=True,
         help="Video filename inside uploads folder OR full path"
     )
+    parser.add_argument(
+        "--job-id",
+        type=str,
+        default=None,
+        help="Job identifier (assigned by the server; generated for CLI runs)"
+    )
 
     args = parser.parse_args()
+    job_id = args.job_id or jobs.new_job_id()
+    paths = jobs.job_paths(job_id)
+    jobs.ensure_job_dirs(paths)
 
-    process_video(args.video)
+    PROGRESS = jobs.ProgressWriter(paths.progress_path, job_id)
+
+    if not jobs.acquire_pipeline_lock(job_id):
+        PROGRESS.fail("Another job is already running on this machine")
+        sys.exit(1)
+    try:
+        process_video(args.video, job_id)
+    except Exception as e:
+        PROGRESS.fail(str(e))
+        raise
+    finally:
+        jobs.release_pipeline_lock(job_id)
