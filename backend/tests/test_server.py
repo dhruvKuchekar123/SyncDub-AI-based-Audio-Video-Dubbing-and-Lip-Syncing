@@ -101,3 +101,25 @@ def test_video_404_until_done(client):
 
 def test_video_unknown_job_404(client):
     assert client.get("/video/deadbeef0000").status_code == 404
+
+
+def test_languages_endpoint_lists_registry(client):
+    res = client.get("/languages")
+    assert res.status_code == 200
+    codes = {e["code"] for e in res.json()["languages"]}
+    assert {"hi", "mr", "en"} <= codes
+
+
+def test_create_job_rejects_unknown_language(client):
+    res = _upload(client, source_lang="hi", target_lang="xx")
+    assert res.status_code == 422
+    assert client.spawned == []
+
+
+def test_create_job_records_language_pair_in_progress(client):
+    job_id = _upload(client, source_lang="hi", target_lang="en").json()["job_id"]
+    data = jobs.read_progress(jobs.job_paths(job_id).progress_path)
+    assert data["source_lang"] == "hi"
+    assert data["target_lang"] == "en"
+    cmd = client.spawned[0]
+    assert cmd[cmd.index("--target-lang") + 1] == "en"

@@ -17,6 +17,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 import config
 import jobs
 from config import USE_VOICE_CLONING
+from stages.languages import get_language, validate_pair
 
 BASE_DIR = str(config.BASE_DIR)
 TEMP_DIR = str(config.TEMP_DIR)
@@ -61,13 +62,14 @@ def get_whisper_model():
         whisper_model = whisper.load_model("medium")
     return whisper_model
 
-def get_translator():
+def get_translator(source_code, target_code):
     global translator
-    if translator is None:
+    key = (source_code, target_code)
+    if translator is None or translator[0] != key:
         from deep_translator import GoogleTranslator
-        print("[INFO] Loading Translator...", flush=True)
-        translator = GoogleTranslator(source='hi', target='mr')
-    return translator
+        print(f"[INFO] Loading Translator ({source_code} -> {target_code})...", flush=True)
+        translator = (key, GoogleTranslator(source=source_code, target=target_code))
+    return translator[1]
 
 
 
@@ -103,12 +105,18 @@ def extract_audio(video_path):
 
 
 # ---------------- SPEECH RECOGNITION ----------------
-def transcribe_audio(audio_path):
+def transcribe_audio(audio_path, whisper_code):
     model = get_whisper_model()
-    
-    # Enforce Hindi. beam_size=2 is a good balance of speed and accuracy.
+
+    # beam_size=2 is a good balance of speed and accuracy;
     # beam_size=5 is much slower for minimal gain.
-    result = model.transcribe(audio_path, beam_size=2, language="hi", task="transcribe")
+    result = model.transcribe(audio_path, beam_size=2, language=whisper_code, task="transcribe")
+
+    detected = result.get("language")
+    if detected and detected != whisper_code:
+        # Warn only — the user picked the source language; no auto-override.
+        print(f"[WARN] Whisper detected language '{detected}' but the job selected "
+              f"'{whisper_code}'. Transcription used '{whisper_code}'.", flush=True)
 
     segments = result.get("segments", [])
 
@@ -144,7 +152,7 @@ def extract_reference_sample(audio_path):
 
 
 # ---------------- TRANSLATION (WITH RETRIES) ----------------
-def translate_text(text):
+def translate_text(text, source_code, target_code):
     if not text.strip():
         return ""
 
@@ -154,7 +162,7 @@ def translate_text(text):
     max_retries = 5 # Increased retries
     for attempt in range(max_retries):
         try:
-            t = get_translator()
+            t = get_translator(source_code, target_code)
             result = t.translate(text)
             
             if result:
@@ -249,32 +257,23 @@ def apply_ssml(text, voice, gender):
     ssml += '</speak>'
     return ssml
 
-def synthesize_speech(text, gender="male"):
+def synthesize_speech(text, gender, target_lang):
 
     if not text.strip():
         raise RuntimeError("Translation produced empty text")
 
-    print(f"[INFO] Generating natural Marathi speech (Edge TTS SSML) - Voice: {gender}...", flush=True)
-    
-    # Select Voice Model based on Gender
-    voice = "mr-IN-AarohiNeural" if gender == "female" else "mr-IN-ManoharNeural"
-    
-    audio_path = os.path.join(TEMP_DIR, "marathi.wav")
-    
+    print(f"[INFO] Generating {target_lang.display_name} speech (Edge TTS) - Voice: {gender}...", flush=True)
+
+    voice = target_lang.edge_voices.get(gender) or target_lang.edge_voices["male"]
+
+    audio_path = os.path.join(TEMP_DIR, "tts_stock.wav")
+
     import edge_tts
     import asyncio
-    
-    # Generate SSML for better prosody
-    ssml_content = apply_ssml(text, voice, gender)
-    communicate = edge_tts.Communicate(text=text, voice=voice) # We'll use Communicate with raw text first if SSML is tricky, 
-    # but actually Communicate supports SSML best via the .ssml property in some versions or via Communicate(text, voice).
-    # For edge-tts 6.x+, we use Communicate(text, voice, rate, pitch). 
-    # For full SSML control, we can use CommunicateHelper or just stick to fine-tuned params.
-    
-    # Let's use the most stable version: fine-tuned params with proper punctuation
-    rate_val = "+2%" if gender == "female" else "-2%" # Manohar is better slightly slower, Aarohi slightly faster
+
+    rate_val = "+2%" if gender == "female" else "-2%"
     pitch_val = "+0Hz"
-    
+
     communicate = edge_tts.Communicate(text, voice, rate=rate_val, pitch=pitch_val)
     
     for attempt in range(3): # 3 retries for TTS
@@ -293,10 +292,19 @@ def synthesize_speech(text, gender="male"):
     raise RuntimeError("TTS failed after multiple attempts")
 
 
-def synthesize_cloned_speech(text, speaker_wav, out_path):
+def synthesize_cloned_speech(text, speaker_wav, out_path, target_lang):
     """Bridge call to voiceclone_env specifically for synthesis"""
     if not text.strip():
         raise RuntimeError("Empty text for cloned synthesis")
+
+    if target_lang.xtts_code is None:
+        raise RuntimeError(
+            f"Voice cloning is not available for {target_lang.display_name}: "
+            "XTTS v2 has no supported language code for it"
+        )
+    if target_lang.xtts_is_proxy:
+        print(f"[WARN] XTTS has no native {target_lang.display_name}; synthesizing via "
+              f"proxy language '{target_lang.xtts_code}'. Quality caveat applies.", flush=True)
 
     print(f"[INFO] Bridging to voiceclone_env for XTTS v2 Cloning...", flush=True)
 
@@ -312,7 +320,7 @@ def synthesize_cloned_speech(text, speaker_wav, out_path):
         "--text", text,
         "--speaker_wav", speaker_wav,
         "--out_path", out_path,
-        "--language", "mr"
+        "--language", target_lang.xtts_code
     ]
 
     try:
@@ -422,7 +430,9 @@ def group_segments(segments, gap_threshold=1.5):
 
 
 # ---------------- MAIN PIPELINE ----------------
-def process_video(video_path, job_id):
+def process_video(video_path, job_id, source_lang="hi", target_lang="mr"):
+
+    src, tgt = validate_pair(source_lang, target_lang)
 
     if not os.path.isabs(video_path):
         video_path = os.path.join(UPLOAD_DIR, video_path)
@@ -439,27 +449,32 @@ def process_video(video_path, job_id):
     audio_path = extract_audio(video_path)
 
     # Speech recognition
-    update_progress(25, "Transcribing Hindi speech")
+    update_progress(25, f"Transcribing {src.display_name} speech")
     # Pre-normalize audio for better ASR
     asr_audio = normalize_audio(audio_path)
-    segments = transcribe_audio(asr_audio)
+    segments = transcribe_audio(asr_audio, src.whisper_code)
 
     print("[INFO] Translating segments with grammatical context...")
 
     grouped_text = group_segments(segments)
 
     print(f"[INFO] Translation blocks created: {len(grouped_text)}", flush=True)
-    update_progress(50, "Translating to Marathi (Contextual)")
 
-    translated_blocks = []
-    for block in grouped_text:
-        mr_text = translate_text(block)
-        try:
-            print(f"[DEBUG] Translated block: {mr_text[:50]}...", flush=True)
-        except:
-            pass
-        translated_blocks.append(mr_text)
-            
+    if src.code == tgt.code:
+        # Same-language job: re-voicing only, no translation stage.
+        update_progress(50, "Skipping translation (same language)")
+        translated_blocks = list(grouped_text)
+    else:
+        update_progress(50, f"Translating to {tgt.display_name} (Contextual)")
+        translated_blocks = []
+        for block in grouped_text:
+            block_text = translate_text(block, src.translator_code, tgt.translator_code)
+            try:
+                print(f"[DEBUG] Translated block: {block_text[:50]}...", flush=True)
+            except:
+                pass
+            translated_blocks.append(block_text)
+
     final_text = " ".join(translated_blocks)
 
     if not final_text.strip():
@@ -474,16 +489,18 @@ def process_video(video_path, job_id):
         update_progress(70, "Synthesizing dubbed audio (Voice Cloning)")
         try:
             # We use the clean reference_wav instead of the full audio_path
-            tts_audio = synthesize_cloned_speech(final_text, reference_wav, os.path.join(TEMP_DIR, "marathi_cloned.wav"))
+            tts_audio = synthesize_cloned_speech(
+                final_text, reference_wav, os.path.join(TEMP_DIR, "tts_cloned.wav"), tgt
+            )
         except Exception as e:
             print(f"[WARN] Voice cloning failed: {e}. Falling back to Edge-TTS.", flush=True)
             # Detect speaker gender as fallback
             speaker_gender = detect_gender(audio_path)
-            tts_audio = synthesize_speech(final_text, gender=speaker_gender)
+            tts_audio = synthesize_speech(final_text, speaker_gender, tgt)
     else:
         update_progress(70, "Synthesizing dubbed audio (Natural)")
         speaker_gender = detect_gender(audio_path)
-        tts_audio = synthesize_speech(final_text, gender=speaker_gender)
+        tts_audio = synthesize_speech(final_text, speaker_gender, tgt)
 
     # NORMALIZE (KEEPING 1.0x SPEED AS REQUESTED)
     tts_audio = normalize_audio(tts_audio)
@@ -534,19 +551,24 @@ if __name__ == "__main__":
         default=None,
         help="Job identifier (assigned by the server; generated for CLI runs)"
     )
+    parser.add_argument("--source-lang", type=str, default="hi")
+    parser.add_argument("--target-lang", type=str, default="mr")
 
     args = parser.parse_args()
     job_id = args.job_id or jobs.new_job_id()
     paths = jobs.job_paths(job_id)
     jobs.ensure_job_dirs(paths)
 
-    PROGRESS = jobs.ProgressWriter(paths.progress_path, job_id)
+    PROGRESS = jobs.ProgressWriter(
+        paths.progress_path, job_id,
+        fields={"source_lang": args.source_lang, "target_lang": args.target_lang},
+    )
 
     if not jobs.acquire_pipeline_lock(job_id):
         PROGRESS.fail("Another job is already running on this machine")
         sys.exit(1)
     try:
-        process_video(args.video, job_id)
+        process_video(args.video, job_id, args.source_lang, args.target_lang)
     except Exception as e:
         PROGRESS.fail(str(e))
         raise

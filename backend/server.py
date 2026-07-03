@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.staticfiles import StaticFiles
 import shutil
 import subprocess
@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import config
 import jobs
+from stages.languages import UnsupportedLanguageError, registry_summary, validate_pair
 
 app = FastAPI()
 
@@ -30,8 +31,22 @@ app.mount("/outputs", StaticFiles(directory=str(config.OUTPUT_DIR)), name="outpu
 PIPELINE_SCRIPT = os.path.join(os.path.dirname(__file__), "inference_marathi.py")
 
 
+@app.get("/languages")
+def get_languages():
+    return {"languages": registry_summary()}
+
+
 @app.post("/jobs")
-async def create_job(file: UploadFile = File(...)):
+async def create_job(
+    file: UploadFile = File(...),
+    source_lang: str = Form("hi"),
+    target_lang: str = Form("mr"),
+):
+    try:
+        validate_pair(source_lang, target_lang)
+    except UnsupportedLanguageError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     busy = jobs.lock_holder()
     if busy is not None:
         raise HTTPException(
@@ -51,7 +66,10 @@ async def create_job(file: UploadFile = File(...)):
     with open(input_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    progress = jobs.ProgressWriter(paths.progress_path, job_id)
+    progress = jobs.ProgressWriter(
+        paths.progress_path, job_id,
+        fields={"source_lang": source_lang, "target_lang": target_lang},
+    )
     progress.update(0, "Initializing...")
 
     command = [
@@ -59,6 +77,8 @@ async def create_job(file: UploadFile = File(...)):
         PIPELINE_SCRIPT,
         "--video", os.path.abspath(input_path),
         "--job-id", job_id,
+        "--source-lang", source_lang,
+        "--target-lang", target_lang,
     ]
     with open(paths.log_path, "a") as log_file:
         subprocess.Popen(command, stdout=log_file, stderr=log_file)

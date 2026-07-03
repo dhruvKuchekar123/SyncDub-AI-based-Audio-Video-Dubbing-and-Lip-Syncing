@@ -163,6 +163,21 @@ const styles = `
 
   .lang-tag img { width: 18px; border-radius: 2px; }
 
+  .lang-select {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border-glass);
+    border-radius: 10px;
+    color: var(--text-main);
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 6px 10px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .lang-select option { background: #14141f; color: var(--text-main); }
+
   .toggle-arrow {
     font-size: 18px;
     color: var(--accent-violet);
@@ -522,7 +537,7 @@ const STEPS = [
   { id: "upload", icon: "📤", label: "Uploading video", start: 0, end: 15 },
   { id: "extract", icon: "🔊", label: "Extracting audio", start: 16, end: 30 },
   { id: "transcribe", icon: "📝", label: "Transcribing speech", start: 31, end: 50 },
-  { id: "translate", icon: "🌐", label: "Translating to Marathi", start: 51, end: 70 },
+  { id: "translate", icon: "🌐", label: "Translating", start: 51, end: 70 },
   { id: "synthesize", icon: "🎙️", label: "Synthesizing voice", start: 71, end: 85 },
   { id: "lipsync", icon: "👄", label: "Lip-sync processing", start: 86, end: 95 },
   { id: "render", icon: "🎬", label: "Final rendering", start: 96, end: 100 },
@@ -537,7 +552,19 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isDone, setIsDone] = useState(false);
+  const [languages, setLanguages] = useState([
+    { code: "hi", display_name: "Hindi" },
+    { code: "mr", display_name: "Marathi" },
+  ]);
+  const [sourceLang, setSourceLang] = useState("hi");
+  const [targetLang, setTargetLang] = useState("mr");
   const fileInput = useRef();
+
+  useEffect(() => {
+    axios.get(`${API_BASE}/languages`)
+      .then((res) => setLanguages(res.data.languages))
+      .catch(() => {}); // keep the hi/mr defaults if the backend is down
+  }, []);
 
   const handleFile = (f) => {
     if (f && f.type.startsWith("video/")) {
@@ -559,6 +586,8 @@ export default function App() {
     try {
       const form = new FormData();
       form.append("file", file);
+      form.append("source_lang", sourceLang);
+      form.append("target_lang", targetLang);
       const res = await axios.post(`${API_BASE}/jobs`, form);
       pollProgress(res.data.job_id);
     } catch (err) {
@@ -622,12 +651,36 @@ export default function App() {
           </div>
           <h1>Sync<span>Dub</span></h1>
           <p>
-            Transaform Hindi videos onto fluen tMarathi dubs-automatically in minutes
+            Transform videos into fluent dubs in your language — automatically, in minutes
           </p>
           <div className="lang-toggle">
-            <div className="lang-tag active"><span>🇮🇳</span> Hindi</div>
+            <div className="lang-tag active">
+              <span>🇮🇳</span>
+              <select
+                className="lang-select"
+                value={sourceLang}
+                onChange={(e) => setSourceLang(e.target.value)}
+                disabled={loading}
+              >
+                {languages.map((l) => (
+                  <option key={l.code} value={l.code}>{l.display_name}</option>
+                ))}
+              </select>
+            </div>
             <div className="toggle-arrow">→</div>
-            <div className="lang-tag active"><span>🎙️</span> Marathi</div>
+            <div className="lang-tag active">
+              <span>🎙️</span>
+              <select
+                className="lang-select"
+                value={targetLang}
+                onChange={(e) => setTargetLang(e.target.value)}
+                disabled={loading}
+              >
+                {languages.map((l) => (
+                  <option key={l.code} value={l.code}>{l.display_name}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </header>
 
@@ -664,7 +717,9 @@ export default function App() {
               {error && <div style={{ color: "#ef4444", fontSize: 13, marginTop: 16, textAlign: "center" }}>⚠️ {error}</div>}
 
               <button className="btn-start" disabled={!file} onClick={startProcessing}>
-                {file ? "GENERATE MARATHI DUB" : "AWAITING SOURCE FILE"}
+                {file
+                  ? `GENERATE ${(languages.find((l) => l.code === targetLang)?.display_name || targetLang).toUpperCase()} DUB`
+                  : "AWAITING SOURCE FILE"}
               </button>
             </>
           ) : isDone ? (
