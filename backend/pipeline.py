@@ -295,14 +295,21 @@ def detect_gender(audio_path):
 
 
 # ---------------- VOICE REFERENCE ----------------
-def extract_reference_sample(audio_path, temp_dir):
-    """A clean clip for cloning: 10 s starting at 5 s (skips intro music),
-    mono 24 kHz (XTTS v2's native rate). Falls back to the full audio.
+def extract_reference_sample(audio_path, temp_dir, segments=None):
+    """Reference clip for cloning, mono 24 kHz (XTTS v2's native rate).
 
+    Preference order: prosody-scored window selection (stages/reference.py,
+    emotion rung 1) -> fixed 10 s cut at 5 s (skips intro music) -> full audio.
     Lives only inside temp/{job_id}/ — deleted with the job (Ch. 12 §12.3)."""
     ref_path = os.path.join(temp_dir, "reference_voice.wav")
-    print("[INFO] Extracting clean voice reference sample...", flush=True)
 
+    if segments:
+        from stages.reference import select_reference
+        selected = select_reference(audio_path, segments, ref_path)
+        if selected:
+            return selected
+
+    print("[INFO] Extracting fixed voice reference sample...", flush=True)
     cmd = [
         config.FFMPEG, "-y",
         "-i", audio_path,
@@ -382,7 +389,12 @@ def process_video(video_path, job_id, source_lang="hi", target_lang="mr", enable
         raise RuntimeError("Translation returned empty text")
 
     update_progress(65, "Extracting voice profile")
-    reference_wav = extract_reference_sample(asr_audio, temp_dir)
+    # The reference sample is sensitive personal data — only extract it when
+    # a consented cloning run will actually use it (Ch. 5 §5.2).
+    reference_wav = (
+        extract_reference_sample(asr_audio, temp_dir, segments)
+        if enable_cloning else None
+    )
     gender = detect_gender(audio_path)
 
     segments, synthesizer_used, fallback_reason = synthesize_segments(
@@ -407,6 +419,15 @@ def process_video(video_path, job_id, source_lang="hi", target_lang="mr", enable
         segments, placements, total_duration_s, os.path.join(temp_dir, "dub_track.wav")
     )
 
+    speaker_similarity = None
+    if synthesizer_used == "xtts_clone" and reference_wav:
+        update_progress(82, "Measuring speaker similarity")
+        speaker_similarity = metrics.compute_speaker_similarity(reference_wav, dub_track)
+        if speaker_similarity is not None:
+            print(f"[INFO] Speaker similarity (reference vs dub): {speaker_similarity}",
+                  flush=True)
+            set_progress_fields(speaker_similarity=speaker_similarity)
+
     metrics.write_job_metrics(paths.metrics_path, metrics.build_job_metrics(
         job_id=job_id,
         total_duration_s=total_duration_s,
@@ -414,6 +435,7 @@ def process_video(video_path, job_id, source_lang="hi", target_lang="mr", enable
         placements=placements,
         synthesizer_used=synthesizer_used,
         fallback_reason=fallback_reason,
+        speaker_similarity=speaker_similarity,
     ))
 
     # FREE MEMORY BEFORE WAV2LIP

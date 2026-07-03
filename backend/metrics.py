@@ -8,6 +8,24 @@ Metric computation must never fail a job; everything here is best-effort.
 import json
 
 
+def compute_speaker_similarity(reference_wav: str, dubbed_wav: str) -> "float | None":
+    """Cosine similarity between speaker embeddings of the cloning reference
+    and the dubbed track (resemblyzer d-vectors, L2-normalized so the dot
+    product is the cosine). The number that backs any 'sounds like the
+    speaker' claim (Ch. 16 axis 3). Best-effort: None on any failure."""
+    try:
+        import numpy as np
+        from resemblyzer import VoiceEncoder, preprocess_wav
+
+        encoder = VoiceEncoder()
+        ref_embed = encoder.embed_utterance(preprocess_wav(reference_wav))
+        dub_embed = encoder.embed_utterance(preprocess_wav(dubbed_wav))
+        return round(float(np.dot(ref_embed, dub_embed)), 4)
+    except Exception as e:
+        print(f"[WARN] Speaker-similarity metric unavailable: {e}", flush=True)
+        return None
+
+
 def build_job_metrics(
     *,
     job_id: str,
@@ -16,6 +34,7 @@ def build_job_metrics(
     placements: list,
     synthesizer_used: str,
     fallback_reason: "str | None" = None,
+    speaker_similarity: "float | None" = None,
 ) -> dict:
     per_segment = []
     by_idx = {p.idx: p for p in placements}
@@ -52,7 +71,7 @@ def build_job_metrics(
             "max_abs_error_s": round(max(abs_errors), 3) if abs_errors else 0.0,
             "total_overlap_ms": sum(s["overlap_ms"] for s in per_segment),
         },
-        "speaker_similarity": None,  # filled by the cloning stage when it runs
+        "speaker_similarity": speaker_similarity,  # None unless cloning ran
         "per_segment": per_segment,
     }
 
