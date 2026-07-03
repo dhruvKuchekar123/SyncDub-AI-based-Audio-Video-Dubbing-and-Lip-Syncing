@@ -1,3 +1,8 @@
-pytest
-ruff
-numpy  # unit tests import the pipeline module, whose only heavy top-level import is numpy
+# Test/lint tier. The unit suite deliberately avoids heavy model imports, so
+# CI needs only this file (numpy/fastapi/httpx included for that reason).
+pytest==8.3.4
+ruff==0.8.4
+httpx==0.28.1  # fastapi.testclient transport
+numpy==1.26.4  # unit tests import pipeline modules whose only heavy top-level import is numpy
+fastapi==0.115.6
+python-multipart==0.0.20
