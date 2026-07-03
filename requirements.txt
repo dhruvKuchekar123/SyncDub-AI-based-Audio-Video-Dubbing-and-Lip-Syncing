@@ -1,20 +1,25 @@
-# Main pipeline environment (the XTTS voice-cloning env is separate; see .env.example)
-# NOTE: unpinned by known debt (docs/debt.md #6); bounds below are correctness, not pins.
-fastapi
-uvicorn
-python-multipart
-openai-whisper
-deep-translator
-edge-tts
-moviepy<2.0  # code uses the 1.x `moviepy.editor` API, removed in 2.0
-torch
-transformers
-sentencepiece
-librosa
-soundfile
-opencv-python
-face-alignment
-numba
-tqdm
-requests
-scipy
+# Main pipeline environment, pinned (docs/debt.md #6).
+# The XTTS voice-cloning env is separate and pinned in requirements-clone.txt.
+# Pins are a mutually compatible baseline (Python 3.10/3.11); bump deliberately,
+# re-running the unit suite and one full pipeline run per bump.
+fastapi==0.115.6
+uvicorn==0.34.0
+python-multipart==0.0.20
+openai-whisper==20240930
+deep-translator==1.11.4
+edge-tts==7.0.2
+moviepy==1.0.3  # code uses the 1.x `moviepy.editor` API, removed in 2.0
+torch==2.5.1
+transformers==4.46.3
+sentencepiece==0.2.0
+librosa==0.10.2.post1
+soundfile==0.12.1
+opencv-python==4.10.0.84
+face-alignment==1.4.1
+numba==0.60.0
+numpy==1.26.4  # <2 required by numba 0.60 / whisper's numba path
+tqdm==4.67.1
+requests==2.32.3
+scipy==1.13.1
+pydub==0.25.1        # per-segment track assembly (backend/stages/assembly.py)
+resemblyzer==0.1.4   # speaker-similarity metric (backend/metrics.py); speechbrain ECAPA is the documented alternative if webrtcvad wheels fail on your platform

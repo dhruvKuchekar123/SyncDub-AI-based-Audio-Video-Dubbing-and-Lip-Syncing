@@ -163,6 +163,21 @@ const styles = `
 
   .lang-tag img { width: 18px; border-radius: 2px; }
 
+  .lang-select {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border-glass);
+    border-radius: 10px;
+    color: var(--text-main);
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 6px 10px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .lang-select option { background: #14141f; color: var(--text-main); }
+
   .toggle-arrow {
     font-size: 18px;
     color: var(--accent-violet);
@@ -403,6 +418,40 @@ const styles = `
     font-size: 10px;
   }
 
+  /* CONSENT */
+  .consent-box {
+    margin-top: 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-glass);
+    border-radius: 16px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .consent-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    cursor: pointer;
+  }
+
+  .consent-row input[type="checkbox"] {
+    margin-top: 2px;
+    width: 16px; height: 16px;
+    accent-color: var(--accent-violet);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .consent-row.nested { margin-left: 26px; }
+
+  .consent-row strong { color: var(--text-main); font-weight: 600; }
+
   /* BUTTONS */
   .btn-start {
     width: 100%;
@@ -508,6 +557,8 @@ const styles = `
   }
 `;
 
+const API_BASE = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
+
 function formatSize(bytes) {
   if (!bytes) return "0 Bytes";
   const k = 1024;
@@ -520,7 +571,7 @@ const STEPS = [
   { id: "upload", icon: "📤", label: "Uploading video", start: 0, end: 15 },
   { id: "extract", icon: "🔊", label: "Extracting audio", start: 16, end: 30 },
   { id: "transcribe", icon: "📝", label: "Transcribing speech", start: 31, end: 50 },
-  { id: "translate", icon: "🌐", label: "Translating to Marathi", start: 51, end: 70 },
+  { id: "translate", icon: "🌐", label: "Translating", start: 51, end: 70 },
   { id: "synthesize", icon: "🎙️", label: "Synthesizing voice", start: 71, end: 85 },
   { id: "lipsync", icon: "👄", label: "Lip-sync processing", start: 86, end: 95 },
   { id: "render", icon: "🎬", label: "Final rendering", start: 96, end: 100 },
@@ -535,7 +586,24 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isDone, setIsDone] = useState(false);
+  const [languages, setLanguages] = useState([
+    { code: "hi", display_name: "Hindi" },
+    { code: "mr", display_name: "Marathi" },
+  ]);
+  const [sourceLang, setSourceLang] = useState("hi");
+  const [targetLang, setTargetLang] = useState("mr");
+  const [uploaderAttestation, setUploaderAttestation] = useState(false);
+  const [enableCloning, setEnableCloning] = useState(false);
+  const [speakerConsent, setSpeakerConsent] = useState(false);
   const fileInput = useRef();
+
+  const consentComplete = uploaderAttestation && (!enableCloning || speakerConsent);
+
+  useEffect(() => {
+    axios.get(`${API_BASE}/languages`)
+      .then((res) => setLanguages(res.data.languages))
+      .catch(() => {}); // keep the hi/mr defaults if the backend is down
+  }, []);
 
   const handleFile = (f) => {
     if (f && f.type.startsWith("video/")) {
@@ -551,31 +619,40 @@ export default function App() {
     setLoading(true);
     setIsDone(false);
     setProgress(0);
+    setError("");
     setStatus("Initializing AI Pipeline...");
 
     try {
       const form = new FormData();
       form.append("file", file);
-      // Change to your actual backend URL
-      await axios.post("http://127.0.0.1:8000/upload-video/", form);
-      pollProgress();
+      form.append("source_lang", sourceLang);
+      form.append("target_lang", targetLang);
+      form.append("enable_cloning", enableCloning);
+      form.append("uploader_attestation", uploaderAttestation);
+      form.append("speaker_cloning_consent", enableCloning && speakerConsent);
+      const res = await axios.post(`${API_BASE}/jobs`, form);
+      pollProgress(res.data.job_id);
     } catch (err) {
-      setError("AI Gateway Timeout. Ensure the backend is running.");
+      const detail = err.response?.data?.detail;
+      setError(detail || "AI Gateway Timeout. Ensure the backend is running.");
       setLoading(false);
     }
   };
 
-  const pollProgress = () => {
+  const pollProgress = (jobId) => {
     const timer = setInterval(async () => {
       try {
-        const res = await axios.get("http://127.0.0.1:8000/progress");
-        const currentProgress = res.data.progress;
-        setProgress(currentProgress);
+        const res = await axios.get(`${API_BASE}/progress/${jobId}`);
+        setProgress(res.data.progress);
         setStatus(res.data.status);
 
-        if (currentProgress === 100) {
+        if (res.data.state === "error") {
           clearInterval(timer);
-          fetchFinalVideo();
+          setError(res.data.error || "Pipeline failed. Check backend/jobs logs.");
+          setLoading(false);
+        } else if (res.data.state === "done") {
+          clearInterval(timer);
+          fetchFinalVideo(jobId);
         }
       } catch (e) {
         clearInterval(timer);
@@ -585,15 +662,16 @@ export default function App() {
     }, 1500);
   };
 
-  const fetchFinalVideo = async () => {
+  const fetchFinalVideo = async (jobId) => {
     try {
-      const res = await axios.get("http://127.0.0.1:8000/video");
-      setOutputUrl("http://127.0.0.1:8000" + res.data.video_url);
+      const res = await axios.get(`${API_BASE}/video/${jobId}`);
+      setOutputUrl(API_BASE + res.data.video_url);
       setLoading(false);
       setIsDone(true);
       setStatus("Mission Complete");
     } catch (e) {
       setError("Final render retrieval failed.");
+      setLoading(false);
     }
   };
 
@@ -615,12 +693,36 @@ export default function App() {
           </div>
           <h1>Sync<span>Dub</span></h1>
           <p>
-            Transaform Hindi videos onto fluen tMarathi dubs-automatically in minutes
+            Transform videos into fluent dubs in your language — automatically, in minutes
           </p>
           <div className="lang-toggle">
-            <div className="lang-tag active"><span>🇮🇳</span> Hindi</div>
+            <div className="lang-tag active">
+              <span>🇮🇳</span>
+              <select
+                className="lang-select"
+                value={sourceLang}
+                onChange={(e) => setSourceLang(e.target.value)}
+                disabled={loading}
+              >
+                {languages.map((l) => (
+                  <option key={l.code} value={l.code}>{l.display_name}</option>
+                ))}
+              </select>
+            </div>
             <div className="toggle-arrow">→</div>
-            <div className="lang-tag active"><span>🎙️</span> Marathi</div>
+            <div className="lang-tag active">
+              <span>🎙️</span>
+              <select
+                className="lang-select"
+                value={targetLang}
+                onChange={(e) => setTargetLang(e.target.value)}
+                disabled={loading}
+              >
+                {languages.map((l) => (
+                  <option key={l.code} value={l.code}>{l.display_name}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </header>
 
@@ -654,10 +756,58 @@ export default function App() {
                 </div>
               )}
 
+              <div className="consent-box">
+                <label className="consent-row">
+                  <input
+                    type="checkbox"
+                    checked={uploaderAttestation}
+                    onChange={(e) => setUploaderAttestation(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Rights attestation (required):</strong> I hold the rights
+                    to this content and the authority to localize it.
+                  </span>
+                </label>
+
+                <label className="consent-row">
+                  <input
+                    type="checkbox"
+                    checked={enableCloning}
+                    onChange={(e) => {
+                      setEnableCloning(e.target.checked);
+                      if (!e.target.checked) setSpeakerConsent(false);
+                    }}
+                  />
+                  <span>
+                    <strong>Clone the original speaker's voice.</strong> Off = studio
+                    neural voices (default).
+                  </span>
+                </label>
+
+                {enableCloning && (
+                  <label className="consent-row nested">
+                    <input
+                      type="checkbox"
+                      checked={speakerConsent}
+                      onChange={(e) => setSpeakerConsent(e.target.checked)}
+                    />
+                    <span>
+                      <strong>Speaker consent (required for cloning):</strong> The
+                      identified speaker(s) have consented to replication of their
+                      voice for this localization.
+                    </span>
+                  </label>
+                )}
+              </div>
+
               {error && <div style={{ color: "#ef4444", fontSize: 13, marginTop: 16, textAlign: "center" }}>⚠️ {error}</div>}
 
-              <button className="btn-start" disabled={!file} onClick={startProcessing}>
-                {file ? "GENERATE MARATHI DUB" : "AWAITING SOURCE FILE"}
+              <button className="btn-start" disabled={!file || !consentComplete} onClick={startProcessing}>
+                {!file
+                  ? "AWAITING SOURCE FILE"
+                  : !consentComplete
+                    ? "CONFIRM CONSENT TO CONTINUE"
+                    : `GENERATE ${(languages.find((l) => l.code === targetLang)?.display_name || targetLang).toUpperCase()} DUB`}
               </button>
             </>
           ) : isDone ? (

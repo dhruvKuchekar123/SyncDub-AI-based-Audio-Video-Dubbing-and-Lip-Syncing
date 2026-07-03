@@ -10,11 +10,11 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-TEMP_DIR = BASE_DIR / "temp"
-OUTPUT_DIR = BASE_DIR / "outputs"
-UPLOAD_DIR = BASE_DIR / "uploads"
-PROGRESS_PATH = BASE_DIR / "progress.json"
-LOG_PATH = BASE_DIR / "pipeline.log"
+TEMP_DIR = BASE_DIR / "temp"          # per-job subdirs, deleted when the job ends
+OUTPUT_DIR = BASE_DIR / "outputs"     # {job_id}.mp4
+UPLOAD_DIR = BASE_DIR / "uploads"     # {job_id}_{original_name}
+PROGRESS_DIR = BASE_DIR / "progress"  # {job_id}.json
+JOBS_DIR = BASE_DIR / "jobs"          # {job_id}/ audit artifacts (consent, metrics, log)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -42,5 +42,5 @@ USE_VOICE_CLONING = _env_bool("SYNCDUB_VOICE_CLONING", default=bool(CLONE_PYTHON
 
 
 def ensure_dirs() -> None:
-    for d in (TEMP_DIR, OUTPUT_DIR, UPLOAD_DIR):
+    for d in (TEMP_DIR, OUTPUT_DIR, UPLOAD_DIR, PROGRESS_DIR, JOBS_DIR):
         d.mkdir(parents=True, exist_ok=True)

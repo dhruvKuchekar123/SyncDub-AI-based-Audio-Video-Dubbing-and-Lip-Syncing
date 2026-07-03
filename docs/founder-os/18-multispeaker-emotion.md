@@ -18,8 +18,8 @@ The expensive mistake would be baking "one speaker per job" into the data model 
 
 The founding brief listed "Emotion Preservation" as a bullet. The honest breakdown of what it actually is, easiest first:
 
-1. **Prosodic carryover in cloning.** XTTS-class models already transfer some speaker affect from the reference sample; today we feed one 10-second reference (`extract_reference_sample`) chosen to avoid intro music, not to represent emotional range. Cheap upgrade: reference selection guided by the content (calm reference for calm lectures) — heuristic, measurable via MOS.
-2. **Segment-level emotion tags.** Classify source segments (neutral/emphatic/questioning/excited — small taxonomy, education-content-appropriate) and pass tags to TTS engines that accept style controls. The tag also lands in the segment schema (one more column now, per §18.1) so editors can correct it — flywheel signal for whatever model eventually consumes it.
+1. **Prosodic carryover in cloning — shipped** (`backend/stages/reference.py`): reference windows are scored by voiced-frame ratio and energy variation inside detected speech blocks and the best two concatenated, instead of the old blind 10-second cut. Heuristic, measurable via MOS (the measurement is still owed).
+2. **Segment-level emotion tags — shipped in v0** (`tag_emotions` in `backend/pipeline.py`): punctuation-derived tags (neutral/emphatic/questioning — small taxonomy, education-content-appropriate) land in the segment schema (§18.1) and map to small Edge-TTS prosody nudges; engines without style controls record the tag only. Editor correction of tags remains future flywheel signal.
 3. **Emphasis alignment.** The lecturer stresses *this word*; the dub should stress its translation. Requires word-level alignment across translation — genuinely hard, genuinely noticeable in education content ("यह **महत्वपूर्ण** है" losing its stress loses the pedagogy). Research-flagged; the flywheel's editor emphasis-corrections are the eventual training data.
 4. **Full affective transfer** (the speaker's exact vocal emotional signature across languages) — frontier research; we adopt (Chapter 15 scouting), never build.
 
@@ -38,9 +38,9 @@ No multi-speaker marketing promises before rung 2 ships with DER gates; no "emot
 
 ## Questions founders should ask
 
-1. Does the segment schema carry `speaker_id` and emotion tags yet — or are we re-baking the demo's assumption into the service?
+1. ~~Does the segment schema carry `speaker_id` and emotion tags yet — or are we re-baking the demo's assumption into the service?~~ Resolved: `backend/stages/types.py` carries both from v1 (`speaker_id="spk0"` until diarization; emotion tagged from punctuation, mapped to Edge-TTS prosody nudges, recorded per job).
 2. What fraction of inbound customer content is actually multi-speaker? (Measure it in real uploads before funding the ladder.)
-3. Is the cloning reference-sample selection still "seconds 5–15, hope for the best"? Rung 1 of emotion is an afternoon of work.
+3. ~~Is the cloning reference-sample selection still "seconds 5–15, hope for the best"? Rung 1 of emotion is an afternoon of work.~~ Resolved: `backend/stages/reference.py` scores speech windows by voiced-frame ratio and energy variation and concatenates the best two; the fixed cut survives only as a fallback.
 4. Are we marketing anything this chapter's gates haven't cleared?
 
 ## Future research topics

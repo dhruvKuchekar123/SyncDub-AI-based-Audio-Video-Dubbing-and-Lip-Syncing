@@ -1,0 +1,16 @@
+# Separate XTTS v2 voice-cloning environment (backend/clone_bridge.py).
+#
+# This env is intentionally NOT merged into requirements.txt: Coqui TTS pins
+# conflict with the main pipeline env, so the bridge runs in its own
+# interpreter referenced by SYNCDUB_CLONE_PYTHON (see .env.example).
+#
+#   python3.11 -m venv .venv-clone
+#   .venv-clone/bin/pip install -r requirements-clone.txt
+#   export SYNCDUB_CLONE_PYTHON=$PWD/.venv-clone/bin/python
+#
+# LICENSE: the XTTS v2 weights are Coqui Public Model License (CPML) —
+# NON-COMMERCIAL. See docs/decisions/0001-xtts-v2-behind-synthesizer-interface.md.
+TTS==0.22.0
+torch==2.4.1        # torch>=2.6 flips weights_only=True by default and breaks XTTS checkpoint load
+torchaudio==2.4.1
+transformers==4.40.2  # transformers>=4.50 removes the generate() path XTTS's GPT2InferenceModel relies on

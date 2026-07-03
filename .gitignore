@@ -19,3 +19,7 @@ outputs/
 uploads/
 *.tmp
 *.temp
+backend/temp/
+backend/progress/
+backend/jobs/
+backend/.pipeline.lock

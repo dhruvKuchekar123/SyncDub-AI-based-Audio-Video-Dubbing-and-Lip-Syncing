@@ -18,10 +18,10 @@ Concrete consequences of the bright line:
 
 ## 5.2 Consent, in layers
 
-Consent is a chain, and today's codebase has none of it — any video uploaded to `backend/server.py` is processed, no questions asked. The charter requires three layers, phased in as the product matures (Chapter 8 sequences the implementation):
+Consent is a chain, and layers 1–2 are now implemented: `POST /jobs` refuses uploads without an uploader rights attestation (HTTP 400), refuses cloning requests without speaker consent, and persists a timestamped consent record (verbatim attestation texts, language pair, input hash) in `jobs/{id}/consent.json`, which outlives the media (§12.3). The charter's three layers, phased in as the product matures (Chapter 8 sequences the implementation):
 
-1. **Uploader attestation (v1, cheap, immediate):** at upload, the customer attests they hold the rights to the content and the authority to localize it. Recorded, timestamped, tied to the account. This is a legal instrument, not a UX hurdle — one checkbox with real words.
-2. **Speaker consent for voice cloning (v1 for cloning path):** cloning (`USE_VOICE_CLONING = True` today, silently) becomes opt-in per project, with a recorded attestation that identified speakers consented to voice replication. Default path remains stock neural voices.
+1. **Uploader attestation (v1, cheap, immediate — implemented):** at upload, the customer attests they hold the rights to the content and the authority to localize it. Recorded, timestamped; tying it to an *account* arrives with accounts themselves (Ch. 8 Stage 3). This is a legal instrument, not a UX hurdle — one checkbox with real words.
+2. **Speaker consent for voice cloning (v1 for cloning path — implemented):** cloning is opt-in per job, with a recorded attestation that identified speakers consented to voice replication, enforced in both the server and the pipeline (`jobs.cloning_allowed`). Default path remains stock neural voices.
 3. **Verified consent (enterprise):** for institutional deals, speaker consent collected verifiably — signed release or an in-product spoken-consent flow ("I authorize SyncDub to replicate my voice for localization of my content", in the speaker's own cloned-reference voice sample). This is the procurement-gate version.
 
 ## 5.3 Provenance and watermarking
@@ -51,7 +51,7 @@ We build *ahead* of Indian regulation, not behind it: India's DPDP Act (personal
 ## Key takeaways
 
 - The bright line: consented transformation of real content, never fabrication. No text-to-speaker feature, ever.
-- Consent is layered — uploader attestation now, speaker consent for cloning now, verified consent for enterprise — and today's code has none of it.
+- Consent is layered — uploader attestation now, speaker consent for cloning now, verified consent for enterprise — layers 1–2 are live in the upload flow; layer 3 remains.
 - Every output must be attributable (hash ledger now, C2PA soon); every job auditable end-to-end.
 - Misuse policy = attestation + attribution + fast takedown, enforced by anyone in the company, in writing.
 - Trust is simultaneously an ethical floor and a competitive moat; that alignment is what makes it durable.
@@ -60,7 +60,7 @@ We build *ahead* of Indian regulation, not behind it: India's DPDP Act (personal
 
 1. Could we, today, prove whether a given viral video was produced by our pipeline? (Today: no. When does that become yes?)
 2. Which charter commitment would be most tempting to waive for our first large deal, and is the enforcement path (§5.5) strong enough to survive that day?
-3. Is the cloning path (`USE_VOICE_CLONING`) still on-by-default without consent capture? Why?
+3. ~~Is the cloning path (`USE_VOICE_CLONING`) still on-by-default without consent capture? Why?~~ Resolved: cloning is opt-in per job behind recorded speaker consent (`jobs.cloning_allowed`); `SYNCDUB_VOICE_CLONING` now only gates *availability* of the clone environment, never activation.
 4. Whose voice-consent gets violated *first* in our wedge market — the professor whose old lectures the institute uploads? What does our attestation actually say about that case?
 
 ## Future research topics
