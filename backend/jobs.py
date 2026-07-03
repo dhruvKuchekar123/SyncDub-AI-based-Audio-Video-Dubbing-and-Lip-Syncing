@@ -132,6 +132,54 @@ def read_progress(progress_path: Path) -> dict | None:
         return {"progress": 0, "status": "Updating...", "state": "running"}
 
 
+# ---------------- consent (Founder OS Ch. 5 §5.2, layers 1-2) ----------------
+
+# The exact words the customer agrees to. Recorded verbatim in the consent
+# record so the attestation is auditable even if this text later changes.
+UPLOADER_ATTESTATION_TEXT = (
+    "I hold the rights to this content and the authority to localize it."
+)
+SPEAKER_CONSENT_TEXT = (
+    "The identified speaker(s) have consented to replication of their voice "
+    "for this localization."
+)
+
+
+def cloning_allowed(
+    requested: bool,
+    speaker_consent: bool,
+    clone_env_configured: bool,
+    xtts_code: "str | None",
+) -> "tuple[bool, str | None]":
+    """(granted, reason-if-not). Consent before capability: the gate runs even
+    though the server also rejects consentless requests with a 400 — a CLI or
+    future caller must hit the same wall."""
+    if not requested:
+        return False, None
+    if not speaker_consent:
+        return False, "speaker consent for voice cloning was not recorded"
+    if not clone_env_configured:
+        return False, "cloning environment not configured (SYNCDUB_CLONE_PYTHON unset)"
+    if xtts_code is None:
+        return False, "voice cloning is not available for the target language"
+    return True, None
+
+
+def write_consent_record(paths: JobPaths, record: dict) -> None:
+    """Persisted in jobs/{id}/ — survives temp cleanup and media deletion
+    (consent attestations outlive the media they cover, Ch. 12 §12.3)."""
+    with open(paths.consent_path, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+
+
+def read_consent_record(paths: JobPaths) -> "dict | None":
+    try:
+        with open(paths.consent_path, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return None
+
+
 # ---------------- single-run lock ----------------
 
 def _pid_alive(pid: int) -> bool:

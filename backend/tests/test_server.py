@@ -30,6 +30,7 @@ def client(tmp_path, monkeypatch):
 
 
 def _upload(client, **data):
+    data.setdefault("uploader_attestation", "true")
     return client.post(
         "/jobs",
         files={"file": ("clip.mp4", b"fake-video-bytes", "video/mp4")},
@@ -114,6 +115,64 @@ def test_create_job_rejects_unknown_language(client):
     res = _upload(client, source_lang="hi", target_lang="xx")
     assert res.status_code == 422
     assert client.spawned == []
+
+
+def test_create_job_requires_uploader_attestation(client):
+    res = _upload(client, uploader_attestation="false")
+    assert res.status_code == 400
+    assert "attestation_text" in res.json()["detail"]
+    assert client.spawned == []
+
+
+def test_cloning_without_speaker_consent_is_400(client):
+    res = _upload(client, enable_cloning="true")
+    assert res.status_code == 400
+    assert "consent_text" in res.json()["detail"]
+    assert client.spawned == []
+
+
+def test_consent_record_written_per_job(client):
+    import hashlib
+    res = _upload(client, enable_cloning="true", speaker_cloning_consent="true")
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    record = jobs.read_consent_record(jobs.job_paths(job_id))
+    assert record["uploader_attestation"] is True
+    assert record["voice_cloning_requested"] is True
+    assert record["speaker_cloning_consent"] is True
+    assert record["speaker_consent_text"] == jobs.SPEAKER_CONSENT_TEXT
+    assert record["recorded_at"]
+    assert record["input_sha256"] == hashlib.sha256(b"fake-video-bytes").hexdigest()
+
+
+def test_cloning_denied_without_clone_env_but_job_proceeds(client, monkeypatch):
+    monkeypatch.setattr(config, "CLONE_PYTHON", None)
+    res = _upload(client, enable_cloning="true", speaker_cloning_consent="true")
+    assert res.status_code == 200
+    cloning = res.json()["cloning"]
+    assert cloning["requested"] is True
+    assert cloning["granted"] is False
+    assert "SYNCDUB_CLONE_PYTHON" in cloning["reason"]
+    # pipeline spawned WITHOUT --clone
+    assert "--clone" not in client.spawned[0]
+
+
+def test_cloning_granted_passes_clone_flag(client, monkeypatch):
+    monkeypatch.setattr(config, "CLONE_PYTHON", "/fake/clone/python")
+    res = _upload(client, target_lang="mr",
+                  enable_cloning="true", speaker_cloning_consent="true")
+    assert res.status_code == 200
+    assert res.json()["cloning"]["granted"] is True
+    assert "--clone" in client.spawned[0]
+
+
+def test_stock_voice_job_never_gets_clone_flag(client, monkeypatch):
+    monkeypatch.setattr(config, "CLONE_PYTHON", "/fake/clone/python")
+    res = _upload(client)
+    assert res.status_code == 200
+    assert res.json()["cloning"] == {"requested": False, "granted": False, "reason": None}
+    assert "--clone" not in client.spawned[0]
 
 
 def test_create_job_records_language_pair_in_progress(client):

@@ -456,21 +456,38 @@ if __name__ == "__main__":
     paths = jobs.job_paths(job_id)
     jobs.ensure_job_dirs(paths)
 
-    PROGRESS = jobs.ProgressWriter(
-        paths.progress_path, job_id,
-        fields={
-            "source_lang": args.source_lang,
-            "target_lang": args.target_lang,
-            "cloning_requested": bool(args.clone),
-        },
-    )
+    # Preserve fields the server already recorded (consent facts, languages).
+    existing = jobs.read_progress(paths.progress_path) or {}
+    seed_fields = {
+        k: v for k, v in existing.items()
+        if k not in ("job_id", "progress", "status", "state", "error")
+    }
+    seed_fields.setdefault("source_lang", args.source_lang)
+    seed_fields.setdefault("target_lang", args.target_lang)
+    seed_fields.setdefault("cloning_requested", bool(args.clone))
+
+    # Consent before capability (Ch. 5 §5.2), enforced here too so a CLI run
+    # cannot clone without a recorded speaker consent, whatever flags it passes.
+    enable_cloning = bool(args.clone)
+    if enable_cloning:
+        consent = jobs.read_consent_record(paths)
+        if not consent or not consent.get("speaker_cloning_consent"):
+            enable_cloning = False
+            seed_fields["cloning_granted"] = False
+            seed_fields["fallback_reason"] = (
+                "speaker consent for voice cloning was not recorded"
+            )
+            print("[WARN] --clone requested without a recorded speaker consent "
+                  f"(jobs/{job_id}/consent.json). Using stock voices.", flush=True)
+
+    PROGRESS = jobs.ProgressWriter(paths.progress_path, job_id, fields=seed_fields)
 
     if not jobs.acquire_pipeline_lock(job_id):
         PROGRESS.fail("Another job is already running on this machine")
         sys.exit(1)
     try:
         process_video(args.video, job_id, args.source_lang, args.target_lang,
-                      enable_cloning=args.clone)
+                      enable_cloning=enable_cloning)
     except Exception as e:
         PROGRESS.fail(str(e))
         raise

@@ -418,6 +418,40 @@ const styles = `
     font-size: 10px;
   }
 
+  /* CONSENT */
+  .consent-box {
+    margin-top: 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-glass);
+    border-radius: 16px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .consent-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    cursor: pointer;
+  }
+
+  .consent-row input[type="checkbox"] {
+    margin-top: 2px;
+    width: 16px; height: 16px;
+    accent-color: var(--accent-violet);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .consent-row.nested { margin-left: 26px; }
+
+  .consent-row strong { color: var(--text-main); font-weight: 600; }
+
   /* BUTTONS */
   .btn-start {
     width: 100%;
@@ -558,7 +592,12 @@ export default function App() {
   ]);
   const [sourceLang, setSourceLang] = useState("hi");
   const [targetLang, setTargetLang] = useState("mr");
+  const [uploaderAttestation, setUploaderAttestation] = useState(false);
+  const [enableCloning, setEnableCloning] = useState(false);
+  const [speakerConsent, setSpeakerConsent] = useState(false);
   const fileInput = useRef();
+
+  const consentComplete = uploaderAttestation && (!enableCloning || speakerConsent);
 
   useEffect(() => {
     axios.get(`${API_BASE}/languages`)
@@ -588,6 +627,9 @@ export default function App() {
       form.append("file", file);
       form.append("source_lang", sourceLang);
       form.append("target_lang", targetLang);
+      form.append("enable_cloning", enableCloning);
+      form.append("uploader_attestation", uploaderAttestation);
+      form.append("speaker_cloning_consent", enableCloning && speakerConsent);
       const res = await axios.post(`${API_BASE}/jobs`, form);
       pollProgress(res.data.job_id);
     } catch (err) {
@@ -714,12 +756,58 @@ export default function App() {
                 </div>
               )}
 
+              <div className="consent-box">
+                <label className="consent-row">
+                  <input
+                    type="checkbox"
+                    checked={uploaderAttestation}
+                    onChange={(e) => setUploaderAttestation(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Rights attestation (required):</strong> I hold the rights
+                    to this content and the authority to localize it.
+                  </span>
+                </label>
+
+                <label className="consent-row">
+                  <input
+                    type="checkbox"
+                    checked={enableCloning}
+                    onChange={(e) => {
+                      setEnableCloning(e.target.checked);
+                      if (!e.target.checked) setSpeakerConsent(false);
+                    }}
+                  />
+                  <span>
+                    <strong>Clone the original speaker's voice.</strong> Off = studio
+                    neural voices (default).
+                  </span>
+                </label>
+
+                {enableCloning && (
+                  <label className="consent-row nested">
+                    <input
+                      type="checkbox"
+                      checked={speakerConsent}
+                      onChange={(e) => setSpeakerConsent(e.target.checked)}
+                    />
+                    <span>
+                      <strong>Speaker consent (required for cloning):</strong> The
+                      identified speaker(s) have consented to replication of their
+                      voice for this localization.
+                    </span>
+                  </label>
+                )}
+              </div>
+
               {error && <div style={{ color: "#ef4444", fontSize: 13, marginTop: 16, textAlign: "center" }}>⚠️ {error}</div>}
 
-              <button className="btn-start" disabled={!file} onClick={startProcessing}>
-                {file
-                  ? `GENERATE ${(languages.find((l) => l.code === targetLang)?.display_name || targetLang).toUpperCase()} DUB`
-                  : "AWAITING SOURCE FILE"}
+              <button className="btn-start" disabled={!file || !consentComplete} onClick={startProcessing}>
+                {!file
+                  ? "AWAITING SOURCE FILE"
+                  : !consentComplete
+                    ? "CONFIRM CONSENT TO CONTINUE"
+                    : `GENERATE ${(languages.find((l) => l.code === targetLang)?.display_name || targetLang).toUpperCase()} DUB`}
               </button>
             </>
           ) : isDone ? (
